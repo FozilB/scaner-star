@@ -9,7 +9,7 @@ It does not place orders and requires no exchange API key.
 - Closed candles only; an unfinished candle cannot trigger a pattern.
 - A preceding move is required (at least 2 ATR over six candles).
 - A candidate must pass at least two of three context checks: proximity to a 50-candle extreme, volume at least 1.5 times its recent average, and RSI in an overbought/oversold zone.
-- It reports a new formation, then updates it once as confirmed, invalidated, or not confirmed when the next candle closes. Confirmation is a mechanical rule, not a guarantee of future movement.
+- It reports a new formation, then sends one update only if the next candle confirms it. Formations that are not confirmed or are invalidated are tracked silently and produce no message. Confirmation is a mechanical rule, not a guarantee of future movement.
 - It inspects recent bars so an hourly run can cover both 30-minute candles that closed since the previous run.
 - It remembers alert states in `scan_state.json` to avoid repeat notifications. GitHub Actions caches that file between runs.
 

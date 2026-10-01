@@ -31,6 +31,9 @@ STATUS_RU = {
     "invalidated": "❌ сценарий отменён закрытием за экстремумом",
     "expired": "⚪ следующая свеча не подтвердила",
 }
+# В Telegram уходят только новые находки и подтверждённые. Статусы "не подтвердил" и
+# "сценарий отменён" запоминаются в state, но сообщений не вызывают.
+NOTIFY_STATUSES = {"pending", "confirmed"}
 STATE_FILE = Path(os.getenv("STATE_FILE", "scan_state.json"))
 RATE_LIMIT_WAIT = 60
 
@@ -151,7 +154,7 @@ def build_message(timeframe: str, rows: list[tuple[str, Signal, float, Candle, s
                      for symbol, signal, price, candle, status in ordered)
     else:
         parts = [header, "Подходящих паттернов не найдено."]
-    if failures:
+    if failures and len(failures) > 0.3 * (scanned + len(failures)):
         parts.append(f"⚠️ Нет данных по: {html.escape(', '.join(failures))}")
     parts.append(
         "<i>Это наблюдение за формацией, не рекомендация на вход и не гарантия движения. "
@@ -226,7 +229,8 @@ def run() -> int:
                     key = signal_key(symbol, timeframe, signal, candles)
                     status = status_of(signal)
                     previous = state.get(key)
-                    should_send = previous is None or (previous == "pending" and status != "pending")
+                    should_send = status in NOTIFY_STATUSES and (
+                        previous is None or (previous == "pending" and status == "confirmed"))
                     state[key] = status if previous is None or status != "pending" else previous
                     if should_send:
                         events.append((symbol, signal, candles[-1].c,
