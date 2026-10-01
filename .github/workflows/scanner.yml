@@ -1,0 +1,40 @@
+name: Candle scanner
+
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: candle-scanner
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/cache@v4
+        with:
+          path: scan_state.json
+          key: scan-state-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: scan-state-
+      - run: pip install -r requirements.txt
+      - name: Scan market and send Telegram alerts
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          QUOTE_CURRENCY: USDT
+          TIMEFRAMES: 30m,1h,4h
+          SYMBOL_LIMIT: 50
+          REQUEST_DELAY: 8
+          MIN_TURNOVER_USDT: 15000000
+          SEND_EMPTY: ${{ github.event_name == 'workflow_dispatch' && '1' || '0' }}
+        run: python main.py
