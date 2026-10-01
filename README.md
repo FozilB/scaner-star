@@ -1,8 +1,8 @@
-# Bybit Candle Scanner → Telegram
+# OKX Candle Scanner → Telegram
 
-Read-only scanner for Bybit USDT linear perpetual contracts. It selects up to 50 qualifying contracts by 24-hour turnover and looks for hammer, shooting star, morning star, and evening star formations on 30-minute, 1-hour, and 4-hour candles.
+Read-only scanner for OKX USDT linear perpetual swaps. It selects up to 50 qualifying contracts by 24-hour turnover and looks for hammer, shooting star, morning star, and evening star formations on 30-minute, 1-hour, and 4-hour candles.
 
-It does not place orders and requires no Bybit API key.
+It does not place orders and requires no exchange API key.
 
 ## What it checks
 
@@ -13,13 +13,13 @@ It does not place orders and requires no Bybit API key.
 - It inspects recent bars so an hourly run can cover both 30-minute candles that closed since the previous run.
 - It remembers alert states in `scan_state.json` to avoid repeat notifications. GitHub Actions caches that file between runs.
 
-These are heuristic filters, not a proven profitable strategy. Candlestick results vary by market and evaluation method. Bybit's public API currently documents a broad IP request limit, but shared GitHub runner IPs and service policies can still change; this scanner waits 8 seconds between every Bybit request and stops on HTTP 403 rather than switching to mismatched market data. See [Bybit rate limits](https://bybit-exchange.github.io/docs/v5/rate-limit).
+These are heuristic filters, not a proven profitable strategy. Candlestick results vary by market and evaluation method. Data comes from OKX public endpoints (checked to answer from GitHub-hosted runners, unlike Bybit and Binance futures, which returned HTTP 403/451 there). The scanner waits 8 seconds between every request and stops on HTTP 403/451 instead of retrying, so it does not worsen an IP restriction.
 
 ## Settings
 
 | Variable | Default | Meaning |
 |---|---:|---|
-| `TIMEFRAMES` | `30m,1h,4h` | Bybit candle intervals scanned |
+| `TIMEFRAMES` | `30m,1h,4h` | OKX candle intervals scanned |
 | `SYMBOL_LIMIT` | `50` | Maximum number of contracts |
 | `MIN_TURNOVER_USDT` | `15000000` | Minimum 24-hour quote turnover |
 | `QUOTE_CURRENCY` | `USDT` | Quote asset used for contract selection |
@@ -48,4 +48,4 @@ python main.py
 3. Enable Actions and run **Candle Pattern Scanner → Run workflow** once.
 4. Scheduled scans run hourly. They only send Telegram messages when a new formation or a status update is found, unless `SEND_EMPTY=1`.
 
-The alert links to the Bybit perpetual chart for the same contract. An alert is a prompt to inspect the chart, not an instruction to trade. False signals remain possible; test rules with historical data and fees before risking money.
+The alert links to the OKX perpetual chart for the same contract. An alert is a prompt to inspect the chart, not an instruction to trade. False signals remain possible; test rules with historical data and fees before risking money.

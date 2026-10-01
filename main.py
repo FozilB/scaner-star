@@ -1,4 +1,4 @@
-"""Hourly Bybit linear-market candlestick scanner with Telegram alerts."""
+"""Hourly OKX linear-swap candlestick scanner with Telegram alerts."""
 from __future__ import annotations
 
 import html
@@ -57,7 +57,7 @@ def closed_only(rows, timeframe: str, now_ms: int) -> list[Candle]:
     return [Candle(*row) for row in sorted(rows) if row[0] + duration_ms <= now_ms]
 
 
-class BybitFetcher:
+class ExchangeFetcher:
     """Enforce a minimum delay between every public API request."""
 
     def __init__(self, delay_seconds: float):
@@ -85,9 +85,9 @@ class BybitFetcher:
             except exchanges.RateLimited:
                 if attempt:
                     raise
-                log(f"Bybit ответил 429; жду {RATE_LIMIT_WAIT} секунд и повторяю запрос")
+                log(f"Биржа ответила 429; жду {RATE_LIMIT_WAIT} секунд и повторяю запрос")
                 time.sleep(RATE_LIMIT_WAIT)
-        raise RuntimeError("Bybit request retry exhausted")
+        raise RuntimeError("Exchange request retry exhausted")
 
 
 def signal_key(symbol: str, timeframe: str, signal: Signal, candles: list[Candle]) -> str:
@@ -123,7 +123,7 @@ def signal_text(symbol: str, timeframe: str, signal: Signal, current_price: floa
     if signal.context.get("near_extreme"):
         bits.append("рядом с экстремумом последних свечей")
     direction = "возможный разворот вверх" if signal.direction == "bull" else "возможный разворот вниз"
-    tv_symbol = quote(f"BYBIT:{symbol}.P", safe=":.")
+    tv_symbol = quote(f"OKX:{symbol}.P", safe=":.")
     chart_url = f"https://www.tradingview.com/chart/?symbol={tv_symbol}&interval={TF_TV[timeframe]}"
     formed_at = datetime.fromtimestamp(signal_candle.t / 1000, timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     details = " · ".join(bits) if bits else "контекстных фильтров мало"
@@ -134,14 +134,14 @@ def signal_text(symbol: str, timeframe: str, signal: Signal, current_price: floa
         f"  Направление паттерна: {direction}\n"
         f"  Закрытие свечи формации: {signal_candle.c:.8g} · текущая цена: {current_price:.8g}\n"
         f"  Контекст: {details} · фильтры {signal.score}/3\n"
-        f"  <a href=\"{chart_url}\">Открыть график Bybit Perpetual</a>"
+        f"  <a href=\"{chart_url}\">Открыть график OKX Perpetual</a>"
     )
 
 
 def build_message(timeframe: str, rows: list[tuple[str, Signal, float, Candle, str]],
                   scanned: int, failures: list[str], now: datetime) -> str:
     header = (
-        f"📊 <b>Bybit USDT perpetual · {TF_LABEL[timeframe]}</b> · "
+        f"📊 <b>OKX USDT perpetual · {TF_LABEL[timeframe]}</b> · "
         f"{now:%Y-%m-%d %H:%M} UTC\nПроверено контрактов: {scanned}"
     )
     if rows:
@@ -198,12 +198,12 @@ def run() -> int:
     quote_currency = env("QUOTE_CURRENCY", "USDT").upper()
     params = Params(min_context=int(env("MIN_CONTEXT", "2")))
     timeframes = pick_timeframes()
-    fetcher = BybitFetcher(delay)
+    fetcher = ExchangeFetcher(delay)
     state = read_state()
 
     symbols = fetcher.symbols(quote_currency, limit, min_turnover)
     if not symbols:
-        raise RuntimeError("Bybit не вернул подходящих контрактов для сканирования")
+        raise RuntimeError("Биржа не вернула подходящих контрактов для сканирования")
     request_count = 1 + len(symbols) * len(timeframes)
     estimate_minutes = max(0, request_count - 1) * delay / 60
     log(f"Найдено контрактов: {len(symbols)}; таймфреймы: {timeframes}; "
@@ -236,7 +236,7 @@ def run() -> int:
             except exchanges.Blocked as error:
                 raise RuntimeError(str(error)) from None
             except exchanges.RateLimited as error:
-                raise RuntimeError(f"Bybit ограничил частоту запросов: {error}") from None
+                raise RuntimeError(f"Биржа ограничила частоту запросов: {error}") from None
             except exchanges.ExchangeError as error:
                 failures.append(symbol)
                 log(f"{symbol} {timeframe}: пропуск ({error})")
