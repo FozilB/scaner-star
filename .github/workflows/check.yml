@@ -1,0 +1,25 @@
+name: Exchange check
+
+on: workflow_dispatch
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check public APIs from GitHub IP
+        run: |
+          echo "Страна сервера: $(curl -s -m 10 https://ipinfo.io/country)"
+          check() {
+            code=$(curl -s -o /tmp/out.txt -w "%{http_code}" -m 15 -A "Mozilla/5.0" "$2")
+            echo "$1 -> HTTP $code | $(head -c 80 /tmp/out.txt | tr '\n' ' ')"
+            sleep 2
+          }
+          check "Bybit perp" "https://api.bybit.com/v5/market/tickers?category=linear"
+          check "Binance futures" "https://fapi.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=1h&limit=3"
+          check "Binance spot mirror" "https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=1h&limit=3"
+          check "OKX perp" "https://www.okx.com/api/v5/market/candles?instId=BTC-USDT-SWAP&bar=1H&limit=3"
+          check "Gate perp" "https://api.gateio.ws/api/v4/futures/usdt/candlesticks?contract=BTC_USDT&interval=1h&limit=3"
+          check "Bitget perp" "https://api.bitget.com/api/v2/mix/market/candles?symbol=BTCUSDT&productType=USDT-FUTURES&granularity=1H&limit=3"
+          check "MEXC perp" "https://contract.mexc.com/api/v1/contract/kline/BTC_USDT?interval=Min60"
+          check "KuCoin spot" "https://api.kucoin.com/api/v1/market/candles?type=1hour&symbol=BTC-USDT"
