@@ -6,7 +6,7 @@ import json
 import os
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote
 
@@ -34,6 +34,7 @@ STATUS_RU = {
 # В Telegram уходят только новые находки и подтверждённые. Статусы "не подтвердил" и
 # "сценарий отменён" запоминаются в state, но сообщений не вызывают.
 NOTIFY_STATUSES = {"pending", "confirmed"}
+TASHKENT = timezone(timedelta(hours=5), "Ташкент")  # UTC+5, летнего времени нет
 STATE_FILE = Path(os.getenv("STATE_FILE", "scan_state.json"))
 RATE_LIMIT_WAIT = 60
 
@@ -97,12 +98,29 @@ def signal_key(symbol: str, timeframe: str, signal: Signal, candles: list[Candle
     return f"{symbol}:{timeframe}:{signal.pattern}:{candles[signal.index].t}"
 
 
-def read_state() -> dict[str, str]:
+def read_payload() -> dict:
     try:
         payload = json.loads(STATE_FILE.read_text(encoding="utf-8"))
-        return payload.get("signals", {}) if isinstance(payload, dict) else {}
+        return payload if isinstance(payload, dict) else {}
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
+
+
+def read_state() -> dict[str, str]:
+    signals = read_payload().get("signals", {})
+    return signals if isinstance(signals, dict) else {}
+
+
+def read_last_scan() -> dict[str, int]:
+    """Для каждого таймфрейма: время открытия последней закрытой свечи, которую мы уже проверили."""
+    last = read_payload().get("last_scan", {})
+    return {k: v for k, v in last.items() if isinstance(v, int)} if isinstance(last, dict) else {}
+
+
+def latest_closed_open(timeframe: str, now_ms: int) -> int:
+    """Время открытия последней уже закрытой свечи таймфрейма (мс)."""
+    period = TIMEFRAMES[timeframe] * 1000
+    return (now_ms // period) * period - period
 
 
 def status_of(signal: Signal) -> str:
@@ -128,14 +146,20 @@ def signal_text(symbol: str, timeframe: str, signal: Signal, current_price: floa
     direction = "возможный разворот вверх" if signal.direction == "bull" else "возможный разворот вниз"
     tv_symbol = quote(f"OKX:{symbol}.P", safe=":.")
     chart_url = f"https://www.tradingview.com/chart/?symbol={tv_symbol}&interval={TF_TV[timeframe]}"
-    formed_at = datetime.fromtimestamp(signal_candle.t / 1000, timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    formed_at = datetime.fromtimestamp(signal_candle.t / 1000, TASHKENT).strftime("%Y-%m-%d %H:%M") + " (Ташкент)"
     details = " · ".join(bits) if bits else "контекстных фильтров мало"
+    level_line = ""
+    if signal.invalidation is not None and current_price > 0:
+        pct = (signal.invalidation - current_price) / current_price * 100
+        side = "ниже" if signal.direction == "bull" else "выше"
+        level_line = f"  Уровень отмены: {side} {signal.invalidation:.8g} ({pct:+.1f}% от текущей цены)\n"
     return (
         f"• <b>{html.escape(symbol)}</b> — <b>{label}</b>\n"
         f"  Статус: {STATUS_RU[status]}\n"
-        f"  Таймфрейм: {TF_LABEL[timeframe]} · свеча: {formed_at}\n"
+        f"  Таймфрейм: {TF_LABEL[timeframe]} · свеча (начало): {formed_at}\n"
         f"  Направление паттерна: {direction}\n"
         f"  Закрытие свечи формации: {signal_candle.c:.8g} · текущая цена: {current_price:.8g}\n"
+        f"{level_line}"
         f"  Контекст: {details} · фильтры {signal.score}/3\n"
         f"  <a href=\"{chart_url}\">Открыть график OKX Perpetual</a>"
     )
@@ -145,21 +169,17 @@ def build_message(timeframe: str, rows: list[tuple[str, Signal, float, Candle, s
                   scanned: int, failures: list[str], now: datetime) -> str:
     header = (
         f"📊 <b>OKX USDT perpetual · {TF_LABEL[timeframe]}</b> · "
-        f"{now:%Y-%m-%d %H:%M} UTC\nПроверено контрактов: {scanned}"
+        f"{now.astimezone(TASHKENT):%Y-%m-%d %H:%M} (Ташкент)\nПроверено контрактов: {scanned}"
     )
     if rows:
         ordered = sorted(rows, key=lambda row: (row[4] != "confirmed", -row[1].score))
-        parts = [header, ""]
+        parts = [header]
         parts.extend(signal_text(symbol, timeframe, signal, price, candle, status)
                      for symbol, signal, price, candle, status in ordered)
     else:
         parts = [header, "Подходящих паттернов не найдено."]
     if failures and len(failures) > 0.3 * (scanned + len(failures)):
         parts.append(f"⚠️ Нет данных по: {html.escape(', '.join(failures))}")
-    parts.append(
-        "<i>Это наблюдение за формацией, не рекомендация на вход и не гарантия движения. "
-        "Проверьте график и риск самостоятельно.</i>"
-    )
     return "\n\n".join(parts)
 
 
@@ -200,9 +220,21 @@ def run() -> int:
     min_turnover = float(env("MIN_TURNOVER_USDT", "15000000"))
     quote_currency = env("QUOTE_CURRENCY", "USDT").upper()
     params = Params(min_context=int(env("MIN_CONTEXT", "2")))
-    timeframes = pick_timeframes()
-    fetcher = ExchangeFetcher(delay)
+    configured = pick_timeframes()
     state = read_state()
+    last_scan = read_last_scan()
+    # ручной запуск (SEND_EMPTY=1 ставит workflow) или FORCE_SCAN=1 проверяют все таймфреймы
+    force = env("FORCE_SCAN") == "1" or env("SEND_EMPTY") == "1"
+    start_ms = int(time.time() * 1000)
+    boundaries = {tf: latest_closed_open(tf, start_ms) for tf in configured}
+    timeframes = [tf for tf in configured if force or last_scan.get(tf) != boundaries[tf]]
+    for tf in configured:
+        if tf not in timeframes:
+            log(f"{tf}: новой закрытой свечи с прошлой проверки нет, пропускаю")
+    if not timeframes:
+        log("Новых закрытых свечей нет ни на одном таймфрейме. Завершено.")
+        return 0
+    fetcher = ExchangeFetcher(delay)
 
     symbols = fetcher.symbols(quote_currency, limit, min_turnover)
     if not symbols:
@@ -246,10 +278,13 @@ def run() -> int:
                 log(f"{symbol} {timeframe}: пропуск ({error})")
 
         failures_all.extend(failures)
+        if len(failures) <= len(symbols) * 0.3:
+            last_scan[timeframe] = boundaries[timeframe]   # проверка удалась — запоминаем
         if events or env("SEND_EMPTY") == "1" or len(failures) > len(symbols) * 0.3:
             send_telegram(build_message(timeframe, events, len(symbols) - len(failures),
                                         failures, datetime.now(timezone.utc)))
-        STATE_FILE.write_text(json.dumps({"signals": dict(list(state.items())[-5000:])},
+        STATE_FILE.write_text(json.dumps({"signals": dict(list(state.items())[-5000:]),
+                                          "last_scan": last_scan},
                                          ensure_ascii=False, indent=2), encoding="utf-8")
 
     log(f"Завершено. Новых уведомлений: {sent_count}; ошибок пар: {len(failures_all)}")

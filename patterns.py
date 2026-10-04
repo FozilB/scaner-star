@@ -49,6 +49,7 @@ class Signal:
     vol_ratio: Optional[float] = None
     invalidated: bool = False
     expired: bool = False
+    invalidation: Optional[float] = None   # уровень отмены: минимум формации (рост) / максимум (падение)
 
 
 # ---------- базовые величины свечи ----------
@@ -194,7 +195,10 @@ def _evaluate(candles, name, direction, s, e, p: Params) -> Optional[Signal]:
         rsi_val = min(rsis) if bull else max(rsis)
         rsi_ok = rsi_val <= p.rsi_bull if bull else rsi_val >= p.rsi_bear
     ctx = {"near_extreme": near_extreme, "volume": vol_ok, "rsi": rsi_ok}
-    return Signal(name, direction, e, False, ctx, sum(ctx.values()), rsi_val, vol_ratio)
+    formation = candles[s:e + 1]
+    level = min(x.l for x in formation) if bull else max(x.h for x in formation)
+    return Signal(name, direction, e, False, ctx, sum(ctx.values()), rsi_val, vol_ratio,
+                  invalidation=level)
 
 
 def _is_confirmed(candles, sig: Signal, nxt: Candle) -> bool:
